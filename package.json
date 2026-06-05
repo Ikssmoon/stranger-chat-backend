@@ -1,0 +1,21 @@
+{
+  "name": "stranger-chat-backend",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test:client": "node test-client.js"
+  },
+  "dependencies": {
+    "socket.io": "^4.7.5",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/uuid": "^9.0.8",
+    "socket.io-client": "^4.7.5",
+    "tsx": "^4.15.7",
+    "typescript": "^5.4.5"
+  }
+}

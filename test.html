@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Stranger Chat — Local Test</title>
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, sans-serif;
+      font-size: 14px;
+      background: #0f0f0f;
+      color: #e0e0e0;
+      display: flex;
+      gap: 12px;
+      padding: 16px;
+      min-height: 100vh;
+    }
+
+    .panel {
+      flex: 1;
+      background: #1a1a1a;
+      border: 1px solid #2e2e2e;
+      border-radius: 10px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .panel-header {
+      padding: 12px 14px;
+      background: #222;
+      border-bottom: 1px solid #2e2e2e;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #444;
+      flex-shrink: 0;
+      transition: background 0.2s;
+    }
+    .status-dot.connected    { background: #4ade80; }
+    .status-dot.searching    { background: #facc15; animation: pulse 1s infinite; }
+    .status-dot.chatting     { background: #60a5fa; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.3; }
+    }
+
+    .controls {
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      border-bottom: 1px solid #2e2e2e;
+    }
+
+    .row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    label { color: #888; font-size: 12px; white-space: nowrap; }
+
+    select, input[type="text"] {
+      flex: 1;
+      background: #111;
+      border: 1px solid #333;
+      border-radius: 6px;
+      color: #e0e0e0;
+      padding: 5px 8px;
+      font-size: 13px;
+      outline: none;
+    }
+    select:focus, input[type="text"]:focus {
+      border-color: #555;
+    }
+
+    button {
+      padding: 6px 12px;
+      border-radius: 6px;
+      border: none;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: opacity 0.15s, background 0.15s;
+    }
+    button:disabled { opacity: 0.35; cursor: not-allowed; }
+
+    .btn-connect    { background: #4ade80; color: #000; }
+    .btn-disconnect { background: #f87171; color: #000; }
+    .btn-search     { background: #facc15; color: #000; }
+    .btn-send       { background: #60a5fa; color: #000; }
+    .btn-skip       { background: #c084fc; color: #000; }
+    .btn-leave      { background: #f97316; color: #000; }
+    .btn-block      { background: #ef4444; color: #fff; }
+
+    .log {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-height: 0;
+    }
+
+    .log-entry {
+      font-size: 12px;
+      line-height: 1.5;
+      padding: 4px 8px;
+      border-radius: 4px;
+      border-left: 3px solid transparent;
+      word-break: break-word;
+    }
+    .log-entry.in       { background: #1e2a1e; border-color: #4ade80; }
+    .log-entry.out      { background: #1a1f2e; border-color: #60a5fa; }
+    .log-entry.info     { background: #2a2a1e; border-color: #facc15; }
+    .log-entry.error    { background: #2a1e1e; border-color: #f87171; }
+    .log-entry.msg-in   { background: #1a2030; border-color: #818cf8; }
+    .log-entry.msg-out  { background: #1e1a30; border-color: #a78bfa; }
+
+    .log-time { color: #555; margin-right: 6px; }
+
+    .chat-row {
+      display: flex;
+      gap: 8px;
+      padding: 10px 14px;
+      border-top: 1px solid #2e2e2e;
+    }
+    .chat-row input { flex: 1; }
+  </style>
+</head>
+<body>
+
+<div class="panel" id="panelA">
+  <div class="panel-header">
+    <div class="status-dot" id="dotA"></div>
+    User A
+    <span id="stateA" style="color:#555;font-weight:400;font-size:12px;margin-left:auto">idle</span>
+  </div>
+
+  <div class="controls">
+    <div class="row">
+      <button class="btn-connect"    id="connectA">Connect</button>
+      <button class="btn-disconnect" id="disconnectA" disabled>Disconnect</button>
+    </div>
+    <div class="row">
+      <label>I am</label>
+      <select id="iAmA">
+        <option value="m">Male</option>
+        <option value="f">Female</option>
+        <option value="any">Any</option>
+      </select>
+      <label>Looking for</label>
+      <select id="lookingForA">
+        <option value="any">Any</option>
+        <option value="m">Male</option>
+        <option value="f">Female</option>
+      </select>
+      <button id="filterA" disabled>Set filter</button>
+    </div>
+    <div class="row">
+      <button class="btn-search" id="searchA"  disabled>Start search</button>
+      <button class="btn-skip"   id="skipA"    disabled>Skip</button>
+      <button class="btn-block"  id="blockA"   disabled>Block</button>
+      <button class="btn-leave"  id="leaveA"   disabled>Leave</button>
+    </div>
+  </div>
+
+  <div class="log" id="logA"></div>
+
+  <div class="chat-row">
+    <input type="text" id="msgA" placeholder="Type a message…" disabled />
+    <button class="btn-send" id="sendA" disabled>Send</button>
+  </div>
+</div>
+
+<div class="panel" id="panelB">
+  <div class="panel-header">
+    <div class="status-dot" id="dotB"></div>
+    User B
+    <span id="stateB" style="color:#555;font-weight:400;font-size:12px;margin-left:auto">idle</span>
+  </div>
+
+  <div class="controls">
+    <div class="row">
+      <button class="btn-connect"    id="connectB">Connect</button>
+      <button class="btn-disconnect" id="disconnectB" disabled>Disconnect</button>
+    </div>
+    <div class="row">
+      <label>I am</label>
+      <select id="iAmB">
+        <option value="f">Female</option>
+        <option value="m">Male</option>
+        <option value="any">Any</option>
+      </select>
+      <label>Looking for</label>
+      <select id="lookingForB">
+        <option value="any">Any</option>
+        <option value="m">Male</option>
+        <option value="f">Female</option>
+      </select>
+      <button id="filterB" disabled>Set filter</button>
+    </div>
+    <div class="row">
+      <button class="btn-search" id="searchB"  disabled>Start search</button>
+      <button class="btn-skip"   id="skipB"    disabled>Skip</button>
+      <button class="btn-block"  id="blockB"   disabled>Block</button>
+      <button class="btn-leave"  id="leaveB"   disabled>Leave</button>
+    </div>
+  </div>
+
+  <div class="log" id="logB"></div>
+
+  <div class="chat-row">
+    <input type="text" id="msgB" placeholder="Type a message…" disabled />
+    <button class="btn-send" id="sendB" disabled>Send</button>
+  </div>
+</div>
+
+<script>
+  function makeUser(id) {
+    const dot        = document.getElementById('dot' + id);
+    const stateEl    = document.getElementById('state' + id);
+    const logEl      = document.getElementById('log' + id);
+    const connectBtn = document.getElementById('connect' + id);
+    const disconnBtn = document.getElementById('disconnect' + id);
+    const filterBtn  = document.getElementById('filter' + id);
+    const searchBtn  = document.getElementById('search' + id);
+    const skipBtn    = document.getElementById('skip' + id);
+    const blockBtn   = document.getElementById('block' + id);
+    const leaveBtn   = document.getElementById('leave' + id);
+    const msgInput   = document.getElementById('msg' + id);
+    const sendBtn    = document.getElementById('send' + id);
+    const iAmSel     = document.getElementById('iAm' + id);
+    const lookSel    = document.getElementById('lookingFor' + id);
+
+    let socket = null;
+    let state  = 'disconnected';
+
+    function log(text, cls = 'info') {
+      const el   = document.createElement('div');
+      el.className = 'log-entry ' + cls;
+      const time = new Date().toLocaleTimeString('en-GB', { hour12: false });
+      el.innerHTML = `<span class="log-time">${time}</span>${text}`;
+      logEl.appendChild(el);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function setState(s) {
+      state = s;
+      stateEl.textContent = s;
+      dot.className = 'status-dot';
+      if (s === 'connected' || s === 'idle') dot.classList.add('connected');
+      else if (s === 'searching')            dot.classList.add('searching');
+      else if (s === 'chatting')             dot.classList.add('chatting');
+
+      const connected = s !== 'disconnected';
+      disconnBtn.disabled = !connected;
+      filterBtn.disabled  = !connected;
+      searchBtn.disabled  = !(connected && s === 'idle');
+      skipBtn.disabled    = !(connected && s === 'chatting');
+      blockBtn.disabled   = !(connected && s === 'chatting');
+      leaveBtn.disabled   = !(connected && (s === 'searching' || s === 'chatting'));
+      msgInput.disabled   = !(connected && s === 'chatting');
+      sendBtn.disabled    = !(connected && s === 'chatting');
+      connectBtn.disabled = connected;
+    }
+
+    connectBtn.addEventListener('click', () => {
+      socket = io('http://localhost:3001', { autoConnect: false });
+
+      socket.on('connect', () => {
+        log(`Connected <span style="color:#555">(${socket.id})</span>`, 'info');
+        setState('idle');
+      });
+
+      socket.on('disconnect', reason => {
+        log(`Disconnected — ${reason}`, 'error');
+        setState('disconnected');
+        connectBtn.disabled = false;
+        socket = null;
+      });
+
+      socket.on('searching', () => {
+        log('⏳ <b>searching</b> — in queue', 'in');
+        setState('searching');
+      });
+
+      socket.on('matched', data => {
+        log(`🎉 <b>matched</b> — roomId: <code>${data.roomId}</code>`, 'in');
+        setState('chatting');
+      });
+
+      socket.on('message', data => {
+        log(`💬 <b>message</b>: ${escHtml(data.text)}`, 'msg-in');
+      });
+
+      socket.on('partner_left', data => {
+        log(`👋 <b>partner_left</b> — reason: <b>${data.reason}</b>`, 'in');
+        setState('searching');
+      });
+
+      socket.on('error', data => {
+        log(`⚠️ <b>error</b> [${data.code}]: ${escHtml(data.message)}`, 'error');
+      });
+
+      socket.connect();
+    });
+
+    disconnBtn.addEventListener('click', () => socket?.disconnect());
+
+    filterBtn.addEventListener('click', () => {
+      const payload = { iAm: iAmSel.value, lookingFor: lookSel.value };
+      socket?.emit('set_filter', payload);
+      log(`→ <b>set_filter</b> iAm=${payload.iAm} lookingFor=${payload.lookingFor}`, 'out');
+    });
+
+    searchBtn.addEventListener('click', () => {
+      socket?.emit('start_search');
+      log('→ <b>start_search</b>', 'out');
+    });
+
+    skipBtn.addEventListener('click', () => {
+      socket?.emit('skip');
+      log('→ <b>skip</b>', 'out');
+    });
+
+    blockBtn.addEventListener('click', () => {
+      socket?.emit('block');
+      log('→ <b>block</b>', 'out');
+    });
+
+    leaveBtn.addEventListener('click', () => {
+      socket?.emit('leave');
+      log('→ <b>leave</b>', 'out');
+      setState('idle');
+    });
+
+    sendBtn.addEventListener('click', sendMessage);
+    msgInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(); });
+
+    function sendMessage() {
+      const text = msgInput.value.trim();
+      if (!text || !socket) return;
+      socket.emit('send_message', { text });
+      log(`📤 <b>you</b>: ${escHtml(text)}`, 'msg-out');
+      msgInput.value = '';
+    }
+  }
+
+  function escHtml(s) {
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  makeUser('A');
+  makeUser('B');
+</script>
+</body>
+</html>
