@@ -23,6 +23,7 @@ export interface UserSession {
   blockedIds: Set<string>;
   lastSearchAt: number;
   lastSkipAt: number;
+  lastPongAt?: number;
 }
 
 // Server → Client event payloads

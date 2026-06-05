@@ -237,6 +237,11 @@ io.on('connection', (socket: Socket) => {
   });
 
   // ── disconnect ──────────────────────────────────────────────────────────────
+  socket.on('pong_custom', () => {
+    const s = session(socket.id);
+    if (s) s.lastPongAt = Date.now();
+  });
+
   socket.on('disconnect', () => {
     const s = session(socket.id);
     if (!s) return;
@@ -252,6 +257,27 @@ io.on('connection', (socket: Socket) => {
     broadcastCount();
   });
 });
+
+// ── heartbeat ────────────────────────────────────────────────────────────────
+const HEARTBEAT_INTERVAL = 5000;
+
+setInterval(() => {
+  const now = Date.now();
+  io.sockets.sockets.forEach(socket => {
+    const s = sessions.get(socket.id);
+    if (!s) return;
+
+    // Check if socket responded to previous ping
+    if (s.lastPongAt && now - s.lastPongAt > HEARTBEAT_INTERVAL * 2) {
+      socket.disconnect(true);
+      return;
+    }
+
+    // Send ping
+    s.lastPongAt = 0;
+    socket.emit('ping_custom');
+  });
+}, HEARTBEAT_INTERVAL);
 
 httpServer.listen(PORT, () => {
   console.log(`stranger-chat backend listening on :${PORT}`);
