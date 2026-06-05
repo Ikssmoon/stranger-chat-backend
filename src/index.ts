@@ -114,6 +114,10 @@ function sendError(socket: Socket, code: string, message: string): void {
 
 // ─── connection handler ───────────────────────────────────────────────────────
 
+function broadcastCount(): void {
+  io.emit('connected_count', { count: io.engine.clientsCount });
+}
+
 io.on('connection', (socket: Socket) => {
   sessions.set(socket.id, {
     state: 'idle',
@@ -122,6 +126,8 @@ io.on('connection', (socket: Socket) => {
     lastSearchAt: 0,
     lastSkipAt: 0,
   });
+
+  broadcastCount();
 
   // ── set_filter ──────────────────────────────────────────────────────────────
   socket.on('set_filter', (data: Partial<UserFilter>) => {
@@ -236,6 +242,7 @@ io.on('connection', (socket: Socket) => {
     }
 
     sessions.delete(socket.id);
+    broadcastCount();
   });
 });
 
