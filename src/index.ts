@@ -160,7 +160,7 @@ io.on('connection', (socket: Socket) => {
   });
 
   // ── send_message ────────────────────────────────────────────────────────────
-  socket.on('send_message', (data: { text: string }) => {
+  socket.on('send_message', (data: { text: string; id?: string }) => {
     const s = session(socket.id);
     if (!s || s.state !== 'chatting') {
       sendError(socket, 'NOT_IN_CHAT', 'Not in a chat');
@@ -168,9 +168,16 @@ io.on('connection', (socket: Socket) => {
     }
     if (typeof data?.text !== 'string' || data.text.trim() === '') return;
     const text = data.text.slice(0, MAX_MESSAGE_LENGTH);
+    const id = typeof data?.id === 'string' ? data.id : uuidv4();
 
     const partner = partnerId(socket.id);
-    if (partner) io.to(partner).emit('message', { text });
+    if (partner) io.to(partner).emit('message', { text, id });
+  });
+
+  // ── react ────────────────────────────────────────────────────────────────────
+  socket.on('react', (data: { messageId: string; emoji: string | null }) => {
+    const partner = partnerId(socket.id);
+    if (partner) io.to(partner).emit('partner_reacted', { messageId: data.messageId, emoji: data.emoji });
   });
 
   // ── skip ────────────────────────────────────────────────────────────────────
