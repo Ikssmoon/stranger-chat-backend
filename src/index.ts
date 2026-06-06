@@ -160,7 +160,7 @@ io.on('connection', (socket: Socket) => {
   });
 
   // ── send_message ────────────────────────────────────────────────────────────
-  socket.on('send_message', (data: { text: string; id?: string }) => {
+  socket.on('send_message', (data: { text: string; id?: string; replaid?: string }) => {
     const s = session(socket.id);
     if (!s || s.state !== 'chatting') {
       sendError(socket, 'NOT_IN_CHAT', 'Not in a chat');
@@ -169,9 +169,10 @@ io.on('connection', (socket: Socket) => {
     if (typeof data?.text !== 'string' || data.text.trim() === '') return;
     const text = data.text.slice(0, MAX_MESSAGE_LENGTH);
     const id = typeof data?.id === 'string' ? data.id : uuidv4();
+    const replaid = typeof data?.replaid === 'string' ? data.replaid.slice(0, MAX_MESSAGE_LENGTH) : '';
 
     const partner = partnerId(socket.id);
-    if (partner) io.to(partner).emit('message', { text, id });
+    if (partner) io.to(partner).emit('message', { text, id, replaid });
   });
 
   // ── react ────────────────────────────────────────────────────────────────────
