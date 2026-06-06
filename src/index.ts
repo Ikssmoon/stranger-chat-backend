@@ -169,14 +169,9 @@ io.on('connection', (socket: Socket) => {
     if (typeof data?.text !== 'string' || data.text.trim() === '') return;
     const text = data.text.slice(0, MAX_MESSAGE_LENGTH);
     const id = typeof data?.id === 'string' ? data.id : uuidv4();
-    const replyTo = typeof data?.replyTo === 'string' ? data.replyTo.slice(0, MAX_MESSAGE_LENGTH) : '';
-
-    console.log('[send_message] received replyTo:', JSON.stringify(replyTo));
-
     const partner = partnerId(socket.id);
     if (partner) {
-      console.log('[send_message] emitting to partner with replyTo:', JSON.stringify(replyTo));
-      io.to(partner).emit('message', { text, id, replyTo });
+      io.to(partner).emit('message', { text, id, replyTo: data.replyTo || '' });
     }
   });
 
