@@ -19,7 +19,8 @@ const io = new Server(httpServer, {
 // socketId → session
 const sessions = new Map<string, UserSession>();
 // roomId → { socketA, socketB }
-const rooms = new Map<string, { socketA: string; socketB: string }>();
+interface RoomLink { url: string; platform: string }
+const rooms = new Map<string, { socketA: string; socketB: string; linkA?: RoomLink; linkB?: RoomLink }>();
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -179,6 +180,28 @@ io.on('connection', (socket: Socket) => {
   socket.on('react', (data: { messageId: string; emoji: string | null }) => {
     const partner = partnerId(socket.id);
     if (partner) io.to(partner).emit('partner_reacted', { messageId: data.messageId, emoji: data.emoji });
+  });
+
+  // ── social_link ───────────────────────────────────────────────────────────────
+  socket.on('social_link', (data: { platform: string; url: string }) => {
+    const s = session(socket.id);
+    if (!s?.roomId) return;
+    const room = rooms.get(s.roomId);
+    if (!room) return;
+
+    const link: RoomLink = { url: data.url, platform: data.platform };
+    const isA = room.socketA === socket.id;
+    if (isA) room.linkA = link; else room.linkB = link;
+
+    const partner = partnerId(socket.id);
+    if (partner) io.to(partner).emit('social_request', { platform: data.platform });
+
+    if (room.linkA && room.linkB) {
+      io.to(room.socketA).emit('social_reveal', { yourUrl: room.linkA.url, theirUrl: room.linkB.url });
+      io.to(room.socketB).emit('social_reveal', { yourUrl: room.linkB.url, theirUrl: room.linkA.url });
+      room.linkA = undefined;
+      room.linkB = undefined;
+    }
   });
 
   // ── skip ────────────────────────────────────────────────────────────────────
