@@ -24,6 +24,8 @@ export interface UserSession {
   lastSearchAt: number;
   lastSkipAt: number;
   lastPongAt?: number;
+  visitorId?: string;
+  isReturning?: boolean;
 }
 
 // Server → Client event payloads

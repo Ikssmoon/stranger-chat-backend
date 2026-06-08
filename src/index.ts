@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { createServer } from 'http';
 import { Server, Socket } from 'socket.io';
 import { v4 as uuidv4 } from 'uuid';
@@ -6,6 +7,7 @@ import {
   UserSession, UserFilter, QueueEntry,
   ErrorPayload, PartnerLeftPayload,
 } from './types';
+import { supabase } from './supabase';
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3001;
 const RATE_LIMIT_MS = 1000;
@@ -18,9 +20,30 @@ const io = new Server(httpServer, {
 
 // socketId → session
 const sessions = new Map<string, UserSession>();
-// roomId → { socketA, socketB }
+// roomId → Room
 interface RoomLink { url: string; platform: string }
-const rooms = new Map<string, { socketA: string; socketB: string; linkA?: RoomLink; linkB?: RoomLink }>();
+interface RoomAnalytics {
+  startedAt: number;
+  messageCount: number;
+  linkExchanged: boolean;
+  reactionsUsed: boolean;
+  brbUsed: boolean;
+  replyUsed: boolean;
+  userAFilter: UserFilter;
+  userBFilter: UserFilter;
+  visitorIdA: string;
+  visitorIdB: string;
+  isReturningA: boolean;
+  isReturningB: boolean;
+}
+interface Room {
+  socketA: string;
+  socketB: string;
+  linkA?: RoomLink;
+  linkB?: RoomLink;
+  analytics: RoomAnalytics;
+}
+const rooms = new Map<string, Room>();
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -70,10 +93,27 @@ function leaveRoom(socketId: string): string | undefined {
 /** Pair two sockets into a new room and emit `matched` to both. */
 function createRoom(socketA: string, socketB: string): void {
   const roomId = uuidv4();
-  rooms.set(roomId, { socketA, socketB });
-
   const sA = sessions.get(socketA);
   const sB = sessions.get(socketB);
+
+  rooms.set(roomId, {
+    socketA,
+    socketB,
+    analytics: {
+      startedAt: Date.now(),
+      messageCount: 0,
+      linkExchanged: false,
+      reactionsUsed: false,
+      brbUsed: false,
+      replyUsed: false,
+      userAFilter: sA ? { ...sA.filter } : { iAm: 'any', lookingFor: 'any' },
+      userBFilter: sB ? { ...sB.filter } : { iAm: 'any', lookingFor: 'any' },
+      visitorIdA: sA?.visitorId ?? '',
+      visitorIdB: sB?.visitorId ?? '',
+      isReturningA: sA?.isReturning ?? false,
+      isReturningB: sB?.isReturning ?? false,
+    },
+  });
 
   if (sA) { sA.state = 'chatting'; sA.roomId = roomId; sA.partnerId = socketB; }
   if (sB) { sB.state = 'chatting'; sB.roomId = roomId; sB.partnerId = socketA; }
@@ -111,6 +151,61 @@ function notifyPartnerLeft(toSocketId: string, reason: PartnerLeftPayload['reaso
 
 function sendError(socket: Socket, code: string, message: string): void {
   socket.emit('error', { code, message } satisfies ErrorPayload);
+}
+
+async function upsertVisitor(visitorId: string, gender: string, now: Date): Promise<void> {
+  if (!supabase || !visitorId) return;
+  try {
+    const { data } = await supabase.from('visitors').select('session_count').eq('id', visitorId).single();
+    if (data) {
+      await supabase.from('visitors').update({
+        last_seen: now.toISOString(),
+        session_count: (data.session_count || 0) + 1,
+      }).eq('id', visitorId);
+    } else {
+      await supabase.from('visitors').insert({
+        id: visitorId,
+        first_seen: now.toISOString(),
+        last_seen: now.toISOString(),
+        session_count: 1,
+        gender,
+      });
+    }
+  } catch (err) { console.error('[analytics] visitor upsert failed:', err); }
+}
+
+function writeRoomAnalytics(roomId: string, endReason: string): void {
+  if (!supabase) return;
+  const room = rooms.get(roomId);
+  if (!room) return;
+  const { analytics } = room;
+  const now = new Date();
+  const durationSeconds = Math.floor((Date.now() - analytics.startedAt) / 1000);
+  void (async () => {
+    try {
+      await supabase.from('sessions').insert({
+        id: roomId,
+        created_at: new Date(analytics.startedAt).toISOString(),
+        ended_at: now.toISOString(),
+        duration_seconds: durationSeconds,
+        end_reason: endReason,
+        message_count: analytics.messageCount,
+        user_a_filter: analytics.userAFilter,
+        user_b_filter: analytics.userBFilter,
+        link_exchanged: analytics.linkExchanged,
+        reactions_used: analytics.reactionsUsed,
+        brb_used: analytics.brbUsed,
+        reply_used: analytics.replyUsed,
+        visitor_id_a: analytics.visitorIdA,
+        visitor_id_b: analytics.visitorIdB,
+        is_returning_a: analytics.isReturningA,
+        is_returning_b: analytics.isReturningB,
+        meta: {},
+      });
+    } catch (err) { console.error('[analytics] session write failed:', err); }
+  })();
+  void upsertVisitor(analytics.visitorIdA, analytics.userAFilter.iAm, now);
+  void upsertVisitor(analytics.visitorIdB, analytics.userBFilter.iAm, now);
 }
 
 // ─── connection handler ───────────────────────────────────────────────────────
@@ -173,13 +268,25 @@ io.on('connection', (socket: Socket) => {
     const partner = partnerId(socket.id);
     if (partner) {
       io.to(partner).emit('message', { text, id, replyTo: data.replyTo || '' });
+      if (s.roomId) {
+        const room = rooms.get(s.roomId);
+        if (room) {
+          room.analytics.messageCount++;
+          if (data.replyTo) room.analytics.replyUsed = true;
+        }
+      }
     }
   });
 
   // ── react ────────────────────────────────────────────────────────────────────
   socket.on('react', (data: { messageId: string; emoji: string | null }) => {
+    const s = session(socket.id);
     const partner = partnerId(socket.id);
     if (partner) io.to(partner).emit('partner_reacted', { messageId: data.messageId, emoji: data.emoji });
+    if (s?.roomId) {
+      const room = rooms.get(s.roomId);
+      if (room) room.analytics.reactionsUsed = true;
+    }
   });
 
   // ── social_link ───────────────────────────────────────────────────────────────
@@ -197,6 +304,7 @@ io.on('connection', (socket: Socket) => {
     if (partner) io.to(partner).emit('social_request', { platform: data.platform });
 
     if (room.linkA && room.linkB) {
+      room.analytics.linkExchanged = true;
       io.to(room.socketA).emit('social_reveal', { yourUrl: room.linkA.url, theirUrl: room.linkB.url });
       io.to(room.socketB).emit('social_reveal', { yourUrl: room.linkB.url, theirUrl: room.linkA.url });
       room.linkA = undefined;
@@ -218,6 +326,7 @@ io.on('connection', (socket: Socket) => {
     }
     s.lastSkipAt = now;
 
+    if (s.roomId) writeRoomAnalytics(s.roomId, 'skip');
     const partner = leaveRoom(socket.id);
     if (partner) notifyPartnerLeft(partner, 'skip');
     enterQueue(socket);
@@ -234,9 +343,37 @@ io.on('connection', (socket: Socket) => {
     const partner = partnerId(socket.id);
     if (partner) s.blockedIds.add(partner);
 
+    if (s.roomId) writeRoomAnalytics(s.roomId, 'block');
     const clearedPartner = leaveRoom(socket.id);
     if (clearedPartner) notifyPartnerLeft(clearedPartner, 'block');
     enterQueue(socket);
+  });
+
+  // ── identify ────────────────────────────────────────────────────────────────
+  socket.on('identify', (data: { visitorId: string; isReturning: boolean }) => {
+    const s = session(socket.id);
+    if (!s) return;
+    if (typeof data?.visitorId === 'string') s.visitorId = data.visitorId;
+    if (typeof data?.isReturning === 'boolean') s.isReturning = data.isReturning;
+  });
+
+  // ── client_error ─────────────────────────────────────────────────────────────
+  socket.on('client_error', (data: { message: string; stack: string; pageState: string; userAgent: string; visitorId: string }) => {
+    if (!supabase) return;
+    void (async () => {
+      try {
+        await supabase.from('client_errors').insert({
+          id: uuidv4(),
+          created_at: new Date().toISOString(),
+          visitor_id: data.visitorId,
+          error_message: data.message,
+          error_stack: data.stack,
+          page_state: data.pageState,
+          user_agent: data.userAgent,
+          meta: {},
+        });
+      } catch {}
+    })();
   });
 
   // ── typing ──────────────────────────────────────────────────────────────────
@@ -254,8 +391,8 @@ io.on('connection', (socket: Socket) => {
       dequeue(socket.id);
       s.state = 'idle';
     } else if (s.state === 'chatting') {
+      if (s.roomId) writeRoomAnalytics(s.roomId, 'leave');
       const partner = leaveRoom(socket.id);
-      // `leave` reason re-uses 'disconnect' — partner just knows the user left
       if (partner) notifyPartnerLeft(partner, 'disconnect');
     }
   });
@@ -273,6 +410,7 @@ io.on('connection', (socket: Socket) => {
     if (s.state === 'searching') {
       dequeue(socket.id);
     } else if (s.state === 'chatting') {
+      if (s.roomId) writeRoomAnalytics(s.roomId, 'disconnect');
       const partner = leaveRoom(socket.id);
       if (partner) notifyPartnerLeft(partner, 'disconnect');
     }
