@@ -202,7 +202,7 @@ function writeRoomAnalytics(roomId: string, endReason: string): void {
         is_returning_b: analytics.isReturningB,
         meta: {},
       });
-    } catch (err) { console.error('[analytics] session write failed:', err); }
+    } catch {}
   })();
   void upsertVisitor(analytics.visitorIdA, analytics.userAFilter.iAm, now);
   void upsertVisitor(analytics.visitorIdB, analytics.userBFilter.iAm, now);
