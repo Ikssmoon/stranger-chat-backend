@@ -381,11 +381,16 @@ io.on('connection', (socket: Socket) => {
       if (supabase) {
         void (async () => {
           try {
-            await supabase.from('blocks').upsert(
-              { blocker_ip: blockerIp, blocked_ip: blockedIp, created_at: new Date().toISOString() },
-              { onConflict: 'blocker_ip,blocked_ip' },
-            );
-          } catch {}
+            const { error } = await supabase.from('blocks').insert({
+              blocker_ip: blockerIp,
+              blocked_ip: blockedIp,
+              created_at: new Date(),
+            });
+            if (error) console.error('[blocks] insert error:', error.message, error.code, error.details);
+            else console.log(`[blocks] persisted: ${blockerIp} → ${blockedIp}`);
+          } catch (err) {
+            console.error('[blocks] insert exception:', err);
+          }
         })();
       }
     }
