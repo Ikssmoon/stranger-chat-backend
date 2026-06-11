@@ -11,6 +11,7 @@ export interface QueueEntry {
   filter: UserFilter;
   joinedAt: number;
   blockedIds: Set<string>;
+  ip: string;
 }
 
 export type UserState = 'idle' | 'searching' | 'chatting';

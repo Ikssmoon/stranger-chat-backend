@@ -18,6 +18,29 @@ const io = new Server(httpServer, {
   cors: { origin: '*' },
 });
 
+// socketId → ip
+const socketToIp = new Map<string, string>();
+// "ipA:ipB" pairs that are mutually blocked (both directions stored)
+const blockedPairs = new Set<string>();
+
+// Load existing blocks from Supabase on startup
+if (supabase) {
+  void (async () => {
+    try {
+      const { data } = await supabase.from('blocks').select('blocker_ip, blocked_ip');
+      if (data) {
+        data.forEach(({ blocker_ip, blocked_ip }: { blocker_ip: string; blocked_ip: string }) => {
+          blockedPairs.add(`${blocker_ip}:${blocked_ip}`);
+          blockedPairs.add(`${blocked_ip}:${blocker_ip}`);
+        });
+        console.log(`Loaded ${data.length} block pairs from Supabase`);
+      }
+    } catch (err) {
+      console.error('Failed to load block pairs:', err);
+    }
+  })();
+}
+
 // socketId → session
 const sessions = new Map<string, UserSession>();
 // roomId → Room
@@ -132,9 +155,10 @@ function enterQueue(socket: Socket): void {
     filter: { ...s.filter },
     joinedAt: Date.now(),
     blockedIds: s.blockedIds,
+    ip: socketToIp.get(socket.id) ?? '',
   };
 
-  const match = enqueue(entry);
+  const match = enqueue(entry, blockedPairs);
 
   if (match) {
     createRoom(socket.id, match.socketId);
@@ -215,6 +239,11 @@ function broadcastCount(): void {
 }
 
 io.on('connection', (socket: Socket) => {
+  const fwd = socket.handshake.headers['x-forwarded-for'];
+  const ip = ((Array.isArray(fwd) ? fwd[0] : fwd)?.split(',')[0]?.trim())
+    ?? socket.handshake.address;
+  socketToIp.set(socket.id, ip);
+
   sessions.set(socket.id, {
     state: 'idle',
     filter: { iAm: 'any', lookingFor: 'any' },
@@ -343,6 +372,24 @@ io.on('connection', (socket: Socket) => {
     const partner = partnerId(socket.id);
     if (partner) s.blockedIds.add(partner);
 
+    const blockerIp = socketToIp.get(socket.id) ?? '';
+    const blockedIp = partner ? (socketToIp.get(partner) ?? '') : '';
+    if (blockerIp && blockedIp) {
+      blockedPairs.add(`${blockerIp}:${blockedIp}`);
+      blockedPairs.add(`${blockedIp}:${blockerIp}`);
+      console.log(`Blocked: ${blockerIp} → ${blockedIp}`);
+      if (supabase) {
+        void (async () => {
+          try {
+            await supabase.from('blocks').upsert(
+              { blocker_ip: blockerIp, blocked_ip: blockedIp, created_at: new Date().toISOString() },
+              { onConflict: 'blocker_ip,blocked_ip' },
+            );
+          } catch {}
+        })();
+      }
+    }
+
     if (s.roomId) writeRoomAnalytics(s.roomId, 'block');
     const clearedPartner = leaveRoom(socket.id);
     if (clearedPartner) notifyPartnerLeft(clearedPartner, 'block');
@@ -416,6 +463,7 @@ io.on('connection', (socket: Socket) => {
     }
 
     sessions.delete(socket.id);
+    socketToIp.delete(socket.id);
     broadcastCount();
   });
 });
