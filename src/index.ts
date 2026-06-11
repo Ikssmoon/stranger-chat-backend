@@ -374,25 +374,27 @@ io.on('connection', (socket: Socket) => {
 
     const blockerIp = socketToIp.get(socket.id) ?? '';
     const blockedIp = partner ? (socketToIp.get(partner) ?? '') : '';
+    console.log(`[block] blockerIp=${blockerIp} blockedIp=${blockedIp} supabase=${!!supabase}`);
+
     if (blockerIp && blockedIp) {
       blockedPairs.add(`${blockerIp}:${blockedIp}`);
       blockedPairs.add(`${blockedIp}:${blockerIp}`);
       console.log(`Blocked: ${blockerIp} → ${blockedIp}`);
-      if (supabase) {
-        void (async () => {
-          try {
-            const { error } = await supabase.from('blocks').insert({
-              blocker_ip: blockerIp,
-              blocked_ip: blockedIp,
-              created_at: new Date(),
-            });
-            if (error) console.error('[blocks] insert error:', error.message, error.code, error.details);
-            else console.log(`[blocks] persisted: ${blockerIp} → ${blockedIp}`);
-          } catch (err) {
-            console.error('[blocks] insert exception:', err);
-          }
-        })();
-      }
+    }
+
+    if (supabase && blockerIp && blockedIp) {
+      void (async () => {
+        try {
+          await supabase.from('blocks').insert({
+            blocker_ip: blockerIp,
+            blocked_ip: blockedIp,
+            created_at: new Date(),
+          });
+          console.log(`Block saved to Supabase: ${blockerIp} → ${blockedIp}`);
+        } catch (err) {
+          console.error('Failed to save block to Supabase:', err);
+        }
+      })();
     }
 
     if (s.roomId) writeRoomAnalytics(s.roomId, 'block');
